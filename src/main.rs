@@ -2,115 +2,81 @@
 use std::io::{self, Read, Write};
 use std::fs::File;
 use std::convert::TryInto;
+use std::string::String;
+use std::path::Path;
+use std::str;
+use std::ffi::CString;
 
-use bytes::{BytesMut, BufMut};
+use std::fs;
+
+use bytes::{BytesMut, BufMut, Buf};
 
 mod packet;
 
 // Server must answer a SSH_FXP_VERSION specifying the lowest version anf
 // its set of capabilities
 // https://tools.ietf.org/pdf/draft-ietf-secsh-filexfer-13.pdf#20
-fn handle_init(stdin : &mut std::io::Stdin, out : &mut File) -> io::Result<()> {
-    write!(out, "Handling INIT !\n");
+fn handle_init(stdin : &mut std::io::Stdin, out : &mut File, buf : &mut bytes::BytesMut) -> io::Result<()> {
+    writeln!(out, "Handling INIT !");
 
-    let mut version = [0; 4];
+    let version_number = buf.get_u32();
 
-    stdin.read_exact(&mut version)?;
-    let version_number = u32::from_be_bytes(version);
-
-    write!(out, "Got SSH FTP Procotol v{}\n", version_number);
+    writeln!(out, "Got SSH FTP Procotol v{}", version_number);
 
     let mut answer = bytes::BytesMut::new();
     answer.put_u8(packet::SSH_FXP_VERSION);
-    answer.put_u32(version_number);
-
-    // Add extensions
-    // string "supported2"
-    // string supported-structure
-    //     uint32 supported-attribute-mask
-    //     uint32 supported-attribute-bits
-    //     uint32 supported-open-flags
-    //     uint32 supported-access-mask
-    //     uint32 max-read-size
-    //     uint16 supported-open-block-vector
-    //     uint16 supported-block-vector
-    //     uint32 attrib-extension-count
-    //     string attrib-extension-names[attrib_extension-count]
-    //     uint32 extension-count
-    //     string extension-names[extension-count]
-
-    // answer.put(&b"supported2"[..]);
-    // answer.put_u32(0);
-    // answer.put_u32(0);
-    // answer.put_u32(0);
-    // answer.put_u32(0);
-    // answer.put_u32(0);
-    // answer.put_u16(0);
-    // answer.put_u16(0);
-    // answer.put(&b""[..]);
-    // answer.put_u32(0);
-    // answer.put(&b""[..]);
-    // // let attribute_mask : u32 = 0;
-    // // let attribute_bits : u32 = 0;
-    // // let open_flags : u32 = 0;
-    // // let access_mask : u32 = 0;
-    // // let max_read_size : u32 = 0;
-    // // let open_block_vector : u16 = 0;
-    // // let attrib_extension_count : u16 = 0;
-    // // let attrib_extension_names = "";
-    // // let extension_count : u32 = 0;
-    // // let extension_names = "";
-
-    // // string "acl-supported"
-    // // string supported-structure
-    // //     uint32 capabilities
-    // answer.put(&b"acl-supported"[..]);
-    // answer.put_u32(0);
+    answer.put_u32(3);
 
     // Convert tu 4 bytes
     let size : u32 = answer.len().try_into().unwrap();
 
-    write!(out, "Sending answer packet {:X?} of size {}\n", answer, size);
+    writeln!(out, "Sending answer packet {:X?} of size {}", answer, size);
     let w = std::io::stdout().write(&size.to_be_bytes())?;
-    write!(out, "Wrote {} bytes\n", w);
+    writeln!(out, "Wrote {} bytes", w);
     let w = std::io::stdout().write(&answer)?;
-    write!(out, "Wrote {} bytes\n", w);
+    writeln!(out, "Wrote {} bytes", w);
     Ok(())
 }
 
-fn handle_version(stdin : &mut std::io::Stdin, out : &mut File) -> io::Result<()> {
-    write!(out, "Handling VERSION !\n");
-    Ok(())
-}
+fn handle_realpath(stdin : &mut std::io::Stdin, out : &mut File, buf : &mut bytes::BytesMut) -> io::Result<()> {
+    writeln!(out, "Handling  SSH_FXP_REALPATH!");
 
-fn handle_open(stdin : &mut std::io::Stdin, out : &mut File) -> io::Result<()> {
-    write!(out, "Handling OPEN !\n");
-    Ok(())
-}
+    let req_id = buf.get_u32();
 
-fn handle_fsetstat(stdin : &mut std::io::Stdin, out : &mut File) -> io::Result<()> {
-    write!(out, "Handling  SSH_FXP_FSETSTAT!\n");
-    Ok(())
-}
+    let req_id_2 = buf.get_u32();
 
-fn handle_realpath(stdin : &mut std::io::Stdin, out : &mut File, to_read : u32) -> io::Result<()> {
-    write!(out, "Handling  SSH_FXP_REALPATH!\n");
+    writeln!(out, "Got REQ ID {}, 2 is {}", req_id, req_id_2);
 
-    let mut req_id = [0; 4];
-    stdin.read_exact(&mut req_id)?;
-    let req_id_number = u32::from_be_bytes(req_id);
+    let rest : Vec<u8> = buf.to_vec();
+    
+    let original_path = str::from_utf8(&rest).unwrap();
 
-    write!(out, "Got REQ ID{}\n", req_id_number);
+    writeln!(out, "Path is {:?}", original_path);
 
-    let mut path = String::new();
-    stdin.read_to_string(&mut path).unwrap();
+    let path = std::path::Path::new(original_path);
+    let realpath = fs::canonicalize(&path).unwrap();
+    writeln!(out, "Real is {:?}", realpath);
+    
+    let mut answer = bytes::BytesMut::new();
+    answer.put_u8(packet::SSH_FXP_NAME);
+    answer.put_u32(req_id);
+    answer.put_u32(1);
+    let to_send_path = realpath.to_str().unwrap().as_bytes();
+    answer.put_u32(to_send_path.len() as u32);
+    answer.put(to_send_path);
+    answer.put_u32(to_send_path.len() as u32);
+    answer.put(to_send_path);
+    answer.put_u32(0);
 
-    write!(out, "Got PATH {}\n", path);
+    // Convert tu 4 bytes
+    let size : u32 = answer.len().try_into().unwrap();
 
-    let string_size : u32 = path.len().try_into().unwrap();
-    let to_read : u32 = to_read - 4 - string_size;
+    writeln!(out, "Sending answer packet {:X?} of size {}", answer, size);
+    let w = std::io::stdout().write(&size.to_be_bytes())?;
+    writeln!(out, "Wrote {:?} bytes", w);
+    let w = std::io::stdout().write(&answer)?;
+    writeln!(out, "Wrote {:?} bytes", w);
 
-    write!(out, "Need to read {}\n", to_read);
     Ok(())
 }
 
@@ -122,23 +88,32 @@ fn main() -> io::Result<()> {
 
     let mut length_packet_buffer = [0; 4];
     let mut packet_type = [0; 1];
-
+    
     loop {
         stdin.read_exact(&mut length_packet_buffer)?;
         let packet_size = u32::from_be_bytes(length_packet_buffer);
-        write!(out, "Got packet of size {}\n", packet_size);
+        writeln!(out, "Got packet of size {}", packet_size);
 
         stdin.read_exact(&mut packet_type)?;
-        write!(out, "Got packet type {:X?}\n", packet_type);
+        writeln!(out, "Got packet type {:X?}", packet_type);
+
+        let length_to_read : usize = (packet_size - 1) as usize;
+
+        let mut buf = bytes::BytesMut::with_capacity(length_to_read);
+        let mut read_buf = Vec::new();
+        stdin
+            .by_ref()
+            .take(length_to_read as u64)
+            .read_to_end(&mut read_buf).unwrap();
+
+        buf.extend_from_slice(&read_buf);
+        writeln!(out, "Packet content: {:?}", buf);
 
         // Dispatch
         match packet_type[0] {
-            packet::SSH_FXP_INIT => handle_init(&mut stdin, &mut out),
-            packet::SSH_FXP_VERSION => handle_version(&mut stdin, &mut out),
-            packet::SSH_FXP_OPEN => handle_open(&mut stdin, &mut out),
-            packet::SSH_FXP_FSETSTAT => handle_fsetstat(&mut stdin, &mut out),
-            packet::SSH_FXP_REALPATH => handle_realpath(&mut stdin, &mut out, packet_size - 1),
-            _ => write!(out, "Unknown packet ID {}\n", packet_type[0])
+            packet::SSH_FXP_INIT => handle_init(&mut stdin, &mut out, &mut buf),
+            packet::SSH_FXP_REALPATH => handle_realpath(&mut stdin, &mut out, &mut buf),
+            _ => writeln!(out, "Unknown packet ID {}", packet_type[0])
         }?;
 
         // Flush out

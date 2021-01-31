@@ -1,1 +1,1 @@
-Implementation of the [SSH File Transfer Protocol](https://tools.ietf.org/pdf/draft-ietf-secsh-filexfer-13.pdf) to learn more about SSH subsystems and Rust.
+Implementation of the [SSH File Transfer Protocol](https://tools.ietf.org/html/draft-ietf-secsh-filexfer-02) version 3 to learn more about SSH subsystems and Rust.
